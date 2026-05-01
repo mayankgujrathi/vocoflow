@@ -1,11 +1,14 @@
+pub mod settings_delete_history_entry;
 pub mod settings_get_about_logs_dir;
 pub mod settings_get_all;
+pub mod settings_get_history;
 pub mod settings_get_logging;
 pub mod settings_get_start_on_login;
 pub mod settings_get_transcription;
 pub mod settings_open_about_external_url;
 pub mod settings_open_about_logs_dir;
 pub mod settings_reset_defaults;
+pub mod settings_update_history;
 pub mod settings_update_hotkey;
 pub mod settings_update_logging;
 pub mod settings_update_start_on_login;

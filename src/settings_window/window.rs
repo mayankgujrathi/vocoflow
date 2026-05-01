@@ -5,7 +5,6 @@ use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
 
 use notify::{
   Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher,
@@ -314,6 +313,35 @@ fn handle_settings_protocol_request(
     return build_json_response(response.status, response.body.into_bytes());
   }
 
+  if let Some(id) = path.strip_prefix("settings/history_audio/") {
+    if request.method() != wry::http::Method::GET {
+      return build_json_response(
+        405,
+        b"{\"ok\":false,\"kind\":\"error.method_not_allowed\"}".to_vec(),
+      );
+    }
+    if let Some(audio_path) = crate::history::resolve_audio_path_for_id(id) {
+      match fs::read(&audio_path) {
+        Ok(bytes) => {
+          return build_bytes_response(200, "audio/wav", bytes);
+        }
+        Err(e) => {
+          warn!(error = %e, path = %audio_path.display(), "failed to read history audio file");
+          return build_bytes_response(
+            500,
+            "text/plain; charset=utf-8",
+            b"Internal Server Error".to_vec(),
+          );
+        }
+      }
+    }
+    return build_bytes_response(
+      404,
+      "text/plain; charset=utf-8",
+      b"Not Found".to_vec(),
+    );
+  }
+
   if request.method() != wry::http::Method::GET {
     return build_json_response(
       405,
@@ -406,9 +434,6 @@ fn start_settings_flash_watcher() {
     }
 
     info!(path = %watch_dir.display(), "settings flash watcher started");
-    let mut last_emit_at = Instant::now()
-      .checked_sub(Duration::from_secs(1))
-      .unwrap_or_else(Instant::now);
 
     loop {
       match rx.recv() {
@@ -417,14 +442,13 @@ fn start_settings_flash_watcher() {
             continue;
           }
 
-          let now = Instant::now();
-          if now.duration_since(last_emit_at) < Duration::from_millis(200) {
-            continue;
-          }
-          last_emit_at = now;
-
           match crate::runtime_flash::take_for_settings_flash() {
             Ok(Some(flash)) => {
+              if flash.history_changed.is_some() {
+                debug!(
+                  "settings flash watcher observed history_changed marker"
+                );
+              }
               crate::settings_window::bridge::events::emit_settings_flash(
                 &flash,
               );

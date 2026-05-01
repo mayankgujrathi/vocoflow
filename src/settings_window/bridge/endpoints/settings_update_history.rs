@@ -1,8 +1,8 @@
 use serde::Deserialize;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use crate::decode_payload;
-use crate::logging;
+use crate::history;
 use crate::settings;
 use crate::settings_window::bridge::lib::{
   BridgeHttpResponse, BridgeRequest, ResolvedRoute, make_error,
@@ -11,12 +11,12 @@ use crate::settings_window::bridge::lib::{
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct SettingsResetDefaultsRequest {
-  scope: String,
+struct SettingsUpdateHistoryRequest {
+  history: settings::HistorySettings,
 }
 
 #[derive(Debug, serde::Serialize)]
-struct SettingsResetDefaultsResponse {
+struct SettingsUpdateHistoryResponse {
   settings: settings::AppSettings,
 }
 
@@ -27,38 +27,31 @@ pub fn handle(
   info!(
     request_id = ?req.request_id,
     route = %route.route_kind,
-    "settings reset-defaults request"
+    "settings update history request"
   );
 
-  let payload: SettingsResetDefaultsRequest =
-    match decode_payload!(req, SettingsResetDefaultsRequest, &route.route_kind)
+  let payload: SettingsUpdateHistoryRequest =
+    match decode_payload!(req, SettingsUpdateHistoryRequest, &route.route_kind)
     {
       Ok(payload) => payload,
       Err(response) => return response,
     };
 
-  let result = match payload.scope.as_str() {
-    "general" => settings::reset_general_defaults(),
-    "logging" => settings::reset_logging_default(),
-    "transcription" => settings::reset_transcription_default(),
-    "history" => settings::reset_history_default(),
-    "all" => settings::reset_all_defaults(),
-    _ => Err(format!("unknown reset scope: {}", payload.scope)),
-  };
-
-  match result {
+  match settings::update_history(payload.history) {
     Ok(updated_settings) => {
+      history::enforce_retention_from_settings();
       crate::settings_window::bridge::events::emit_settings_changed(
         &updated_settings,
       );
-      if matches!(payload.scope.as_str(), "logging" | "all") {
-        logging::apply_runtime_logging_settings();
-      }
-
+      debug!(
+        request_id = ?req.request_id,
+        retention_max_sessions = updated_settings.history.retention_max_sessions,
+        "settings history updated"
+      );
       success_response(
         req.request_id.clone(),
         route,
-        SettingsResetDefaultsResponse {
+        SettingsUpdateHistoryResponse {
           settings: updated_settings,
         },
       )
@@ -67,20 +60,19 @@ pub fn handle(
       error!(
         request_id = ?req.request_id,
         error = %err,
-        scope = %payload.scope,
-        "settings reset-defaults failed"
+        "settings update history failed"
       );
       let error = make_error(
-        "SETTINGS_RESET_FAILED",
-        format!("Failed to reset settings defaults: {err}"),
-        Some("scope"),
-        Some("general|logging|transcription|history|all"),
-        Some(payload.scope),
+        "SETTINGS_UPDATE_FAILED",
+        format!("Failed to update settings: {err}"),
+        None,
+        None,
+        Some(err),
       );
       let body = serde_json::json!({
         "request_id": req.request_id.clone(),
         "ok": false,
-        "kind": "error.settings_reset_failed",
+        "kind": "error.settings_update_failed",
         "payload": {},
         "error": error,
       })

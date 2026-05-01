@@ -16,6 +16,7 @@ use reqwest::redirect::Policy;
 use tracing::{debug, error, info, warn};
 
 use crate::audio::recording_output_path;
+use crate::history;
 use crate::llm::{
   LlmAppContext, LlmPostProcessorConfig, process_transcript_with_llm,
 };
@@ -358,13 +359,24 @@ fn transcribe_call() -> Result<(), ()> {
 
   let normalized_transcript =
     process_transcript_with_custom_dictionary(transcript_text.as_str());
+  let transcription_cfg = settings::current().transcription;
+  let llm_enabled = !matches!(
+    transcription_cfg.transcript_reformatting_level,
+    TranscriptReformattingLevel::None
+  );
   let active_app_info = get_active_application_info();
   let mut had_post_process_error = false;
+  let mut processed_transcript: Option<String> = None;
   let final_transcript = match post_process_transcript(
     normalized_transcript.as_str(),
     &active_app_info,
   ) {
-    Ok(text) => text,
+    Ok(text) => {
+      if llm_enabled {
+        processed_transcript = Some(text.clone());
+      }
+      text
+    }
     Err(err) => {
       had_post_process_error = true;
       error!(error = %err, "post processing transcript failed; falling back to local transcript");
@@ -385,6 +397,19 @@ fn transcribe_call() -> Result<(), ()> {
     warn!(error = %e, "failed pasting transcript into active input field");
   } else {
     info!("paste shortcut dispatched to active window");
+  }
+
+  let recording_path = recording_output_path();
+  if let Err(e) = history::append_entry(
+    recording_path.as_path(),
+    normalized_transcript.as_str(),
+    processed_transcript,
+  ) {
+    warn!(error = %e, "failed to append transcription history entry");
+  } else {
+    if let Err(e) = runtime_flash::record_history_changed() {
+      warn!(error = %e, "failed to write history-changed flash payload");
+    }
   }
 
   info!(text = %result.text, "transcription completed");

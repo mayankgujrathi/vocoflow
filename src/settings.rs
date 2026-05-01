@@ -29,6 +29,21 @@ pub struct AppSettings {
   pub hotkey: HotkeySettings,
   pub logging: LoggingSettings,
   pub transcription: TranscriptionSettings,
+  pub history: HistorySettings,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct HistorySettings {
+  pub retention_max_sessions: u32,
+}
+
+impl Default for HistorySettings {
+  fn default() -> Self {
+    Self {
+      retention_max_sessions: 20,
+    }
+  }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -340,6 +355,32 @@ pub fn update_transcription(
   Ok(current())
 }
 
+pub fn update_history(history: HistorySettings) -> Result<AppSettings, String> {
+  info!(
+    retention_max_sessions = history.retention_max_sessions,
+    "updating history settings"
+  );
+  initialize();
+  let Some(lock) = SETTINGS.get() else {
+    return Err("settings store unavailable".to_string());
+  };
+
+  let snapshot = {
+    let mut guard = lock
+      .write()
+      .map_err(|_| "settings lock poisoned".to_string())?;
+    guard.history = HistorySettings {
+      retention_max_sessions: history.retention_max_sessions.min(200),
+    };
+    guard.clone()
+  };
+
+  write_settings(&settings_path(), &snapshot)?;
+  let changed = refresh_from_disk()?;
+  debug!(changed, "settings reloaded from disk after history update");
+  Ok(current())
+}
+
 pub fn reset_general_defaults() -> Result<AppSettings, String> {
   let defaults = AppSettings::default();
   initialize();
@@ -367,6 +408,10 @@ pub fn reset_logging_default() -> Result<AppSettings, String> {
 
 pub fn reset_transcription_default() -> Result<AppSettings, String> {
   update_transcription(TranscriptionSettings::default())
+}
+
+pub fn reset_history_default() -> Result<AppSettings, String> {
+  update_history(HistorySettings::default())
 }
 
 pub fn reset_all_defaults() -> Result<AppSettings, String> {

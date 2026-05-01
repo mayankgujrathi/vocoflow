@@ -17,6 +17,26 @@ export type TranscriptionSettings = {
   llm_custom_prompt: string
 }
 
+export type HistorySettings = {
+  retention_max_sessions: number
+}
+
+export type HistoryEntry = {
+  id: string
+  created_at_unix_ms: number
+  audio_file_name: string
+  raw_transcript: string
+  processed_transcript?: string | null
+}
+
+export type HistoryPage = {
+  items: HistoryEntry[]
+  page: number
+  page_size: number
+  total_items: number
+  total_pages: number
+}
+
 export type HotkeySettings = {
   binding: string
   chord_timeout_ms: number
@@ -31,6 +51,7 @@ export type AppSettings = {
   hotkey: HotkeySettings
   logging: LoggingSettings
   transcription: TranscriptionSettings
+  history: HistorySettings
 }
 
 export type FlashMessage = {
@@ -38,6 +59,11 @@ export type FlashMessage = {
   occurred_at_unix_ms: number
 }
 
+export type FlashMarker = {
+  occurred_at_unix_ms: number
+}
+
 export type SettingsFlashPayload = {
   llm_post_process_error?: FlashMessage
+  history_changed?: FlashMarker
 }

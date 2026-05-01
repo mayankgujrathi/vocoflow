@@ -4,6 +4,18 @@ This page contains operational details for runtime settings, logs, and traces.
 
 ## Settings File
 
+### History
+
+- History is stored **locally on device only**.
+- Settings includes a **retention slider** for last N sessions.
+  - `0` means do not retain history.
+  - Max retention is capped in-app for performance.
+- History view supports:
+  - Audio playback for each saved entry
+  - Copy raw transcript (local ASR)
+  - Copy processed transcript (LLM output when available)
+  - Pagination to keep rendering lightweight
+
 - Path: `<base_path>/settings.json`
 - The app creates this file with defaults if it is missing.
 

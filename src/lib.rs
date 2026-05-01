@@ -5,6 +5,7 @@
 pub mod app;
 pub mod audio;
 pub mod autostart;
+pub mod history;
 pub mod hotkey;
 pub mod llm;
 pub mod logging;

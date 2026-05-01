@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { FaCircleInfo, FaGear, FaMicrophoneLines, FaSliders } from 'react-icons/fa6'
+import { FaCircleInfo, FaClockRotateLeft, FaGear, FaMicrophoneLines, FaSliders } from 'react-icons/fa6'
 
 import {
+  deleteHistoryEntry,
+  getHistoryPage,
   getAllSettings,
   openAboutExternalUrl,
   openAboutLogsDir,
   resetDefaults,
   signalSettingsWindowReady,
   subscribeSettingsEvents,
+  updateHistory,
   updateHotkey,
   updateLogging,
   updateStartOnLogin,
@@ -17,9 +20,10 @@ import { SettingsShell } from './components/layout/SettingsShell'
 import { SettingsSidebar, type SettingsTab } from './components/navigation/SettingsSidebar'
 import { AboutSection } from './components/sections/AboutSection'
 import { GeneralSection } from './components/sections/GeneralSection'
+import { HistorySection } from './components/sections/HistorySection'
 import { LoggingSection } from './components/sections/LoggingSection'
 import { TranscriptionSection } from './components/sections/TranscriptionSection'
-import type { AppSettings } from './types/settings'
+import type { AppSettings, HistoryPage } from './types/settings'
 
 const LLM_GUIDE_URL = 'https://github.com/mayankgujrathi/vocoflow/blob/main/docs/LLM_SETUP_AND_USAGE.md'
 
@@ -41,6 +45,17 @@ const EMPTY_SETTINGS: AppSettings = {
     llm_model_name: '',
     llm_custom_prompt: '',
   },
+  history: {
+    retention_max_sessions: 20,
+  },
+}
+
+const EMPTY_HISTORY_PAGE: HistoryPage = {
+  items: [],
+  page: 1,
+  page_size: 20,
+  total_items: 0,
+  total_pages: 1,
 }
 
 function App() {
@@ -50,6 +65,8 @@ function App() {
   const [status, setStatus] = useState('Loading settings...')
   const [flashError, setFlashError] = useState<string>('')
   const [savingKey, setSavingKey] = useState<string>('')
+  const [historyPage, setHistoryPage] = useState<HistoryPage>(EMPTY_HISTORY_PAGE)
+  const [historyLoading, setHistoryLoading] = useState(false)
   const [uiBootReady, setUiBootReady] = useState(false)
   const lastEventVersionRef = useRef(0)
   const suppressAutosaveRef = useRef(false)
@@ -58,15 +75,18 @@ function App() {
   const dirtyHotkeyRef = useRef(false)
   const dirtyLoggingRef = useRef(false)
   const dirtyTranscriptionRef = useRef(false)
+  const dirtyHistoryRef = useRef(false)
   const startOnLoginTimerRef = useRef<number | null>(null)
   const hotkeyTimerRef = useRef<number | null>(null)
   const loggingTimerRef = useRef<number | null>(null)
   const transcriptionTimerRef = useRef<number | null>(null)
+  const historyTimerRef = useRef<number | null>(null)
   const prevStartOnLoginRef = useRef<boolean | null>(null)
   const prevHotkeyBindingRef = useRef<string | null>(null)
   const prevHotkeyTimeoutRef = useRef<number | null>(null)
   const prevLoggingSnapshotRef = useRef<string | null>(null)
   const prevTranscriptionSnapshotRef = useRef<string | null>(null)
+  const prevHistorySnapshotRef = useRef<string | null>(null)
 
   const applyRemoteSettings = (next: AppSettings) => {
     suppressAutosaveRef.current = true
@@ -76,10 +96,12 @@ function App() {
     prevHotkeyTimeoutRef.current = next.hotkey.chord_timeout_ms
     prevLoggingSnapshotRef.current = JSON.stringify(next.logging)
     prevTranscriptionSnapshotRef.current = JSON.stringify(next.transcription)
+    prevHistorySnapshotRef.current = JSON.stringify(next.history)
     dirtyStartOnLoginRef.current = false
     dirtyHotkeyRef.current = false
     dirtyLoggingRef.current = false
     dirtyTranscriptionRef.current = false
+    dirtyHistoryRef.current = false
     queueMicrotask(() => {
       suppressAutosaveRef.current = false
     })
@@ -102,6 +124,20 @@ function App() {
       window.clearTimeout(transcriptionTimerRef.current)
       transcriptionTimerRef.current = null
     }
+    if (historyTimerRef.current != null) {
+      window.clearTimeout(historyTimerRef.current)
+      historyTimerRef.current = null
+    }
+  }
+
+  const loadHistoryPage = async (page: number) => {
+    setHistoryLoading(true)
+    try {
+      const loaded = await getHistoryPage(page, 20)
+      setHistoryPage(loaded)
+    } finally {
+      setHistoryLoading(false)
+    }
   }
 
   const sidebarItems = useMemo(
@@ -109,6 +145,7 @@ function App() {
       { id: 'general' as const, label: 'General', icon: FaSliders },
       { id: 'logging' as const, label: 'Logging', icon: FaGear },
       { id: 'transcription' as const, label: 'Speech', icon: FaMicrophoneLines },
+      { id: 'history' as const, label: 'History', icon: FaClockRotateLeft },
       { id: 'about' as const, label: 'About', icon: FaCircleInfo },
     ],
     [],
@@ -119,6 +156,7 @@ function App() {
       try {
         const loadedSettingsPayload = await getAllSettings()
         applyRemoteSettings(loadedSettingsPayload.settings)
+        await loadHistoryPage(1)
         setLogsDir(loadedSettingsPayload.logs_dir)
         const flash = loadedSettingsPayload.flash?.llm_post_process_error
         if (flash?.message) {
@@ -170,13 +208,18 @@ function App() {
       }
 
       if (evt.event === 'settings.flash') {
-        const flash = evt.payload.flash.llm_post_process_error
-        if (flash?.message) {
-          setFlashError(flash.message)
+        const flashPayload = evt.payload.flash
+        const llmFlash = flashPayload.llm_post_process_error
+        if (llmFlash?.message) {
+          setFlashError(llmFlash.message)
+        }
+
+        if (flashPayload.history_changed) {
+          void loadHistoryPage(historyPage.page)
         }
       }
     })
-  }, [])
+  }, [historyPage.page])
 
   useEffect(() => {
     const markClosing = () => {
@@ -345,6 +388,44 @@ function App() {
     }
   }, [settings.transcription])
 
+  useEffect(() => {
+    if (suppressAutosaveRef.current) {
+      return
+    }
+    if (isClosingRef.current || !dirtyHistoryRef.current) {
+      return
+    }
+
+    const historySnapshot = JSON.stringify(settings.history)
+    if (prevHistorySnapshotRef.current === historySnapshot) {
+      return
+    }
+    prevHistorySnapshotRef.current = historySnapshot
+
+    historyTimerRef.current = window.setTimeout(async () => {
+      if (isClosingRef.current) {
+        return
+      }
+      setSavingKey('history')
+      try {
+        await updateHistory(settings.history)
+        dirtyHistoryRef.current = false
+        setStatus('History settings auto-saved.')
+        await loadHistoryPage(1)
+      } catch (error) {
+        setStatus(`Save failed: ${String(error)}`)
+      } finally {
+        setSavingKey('')
+      }
+    }, 300)
+    return () => {
+      if (historyTimerRef.current != null) {
+        window.clearTimeout(historyTimerRef.current)
+        historyTimerRef.current = null
+      }
+    }
+  }, [settings.history])
+
   const openLogs = async () => {
     setSavingKey('about')
     try {
@@ -367,11 +448,14 @@ function App() {
     }
   }
 
-  const runReset = async (scope: 'general' | 'logging' | 'transcription' | 'all') => {
+  const runReset = async (scope: 'general' | 'logging' | 'transcription' | 'history' | 'all') => {
     setSavingKey(scope)
     try {
       const next = await resetDefaults(scope)
       setSettings(next)
+      if (scope === 'history' || scope === 'all') {
+        await loadHistoryPage(1)
+      }
       setStatus(`Reset ${scope} defaults.`)
     } catch (error) {
       setStatus(`Reset failed: ${String(error)}`)
@@ -451,6 +535,42 @@ function App() {
             onReset={() => void runReset('transcription')}
             onOpenLlmGuide={() => void openExternalLink(LLM_GUIDE_URL)}
             saving={savingKey === 'transcription'}
+          />
+        )}
+
+        {activeTab === 'history' && (
+          <HistorySection
+            settings={settings.history}
+            onRetentionChange={(next) => {
+              dirtyHistoryRef.current = true
+              setSettings((prev) => ({ ...prev, history: { retention_max_sessions: next } }))
+            }}
+            page={historyPage}
+            loading={historyLoading}
+            onPrevPage={() => void loadHistoryPage(Math.max(1, historyPage.page - 1))}
+            onNextPage={() => void loadHistoryPage(Math.min(historyPage.total_pages, historyPage.page + 1))}
+            onCopyRaw={(text) => {
+              void navigator.clipboard.writeText(text)
+              setStatus('Raw transcript copied.')
+            }}
+            onCopyProcessed={(text) => {
+              if (!text) return
+              void navigator.clipboard.writeText(text)
+              setStatus('Processed transcript copied.')
+            }}
+            onDelete={(id) => {
+              if (!window.confirm('Delete this history session? This cannot be undone.')) {
+                return
+              }
+              void deleteHistoryEntry(id)
+                .then(() => {
+                  setStatus('History entry deleted.')
+                  return loadHistoryPage(historyPage.page)
+                })
+                .catch((error) => {
+                  setStatus(`Delete failed: ${String(error)}`)
+                })
+            }}
           />
         )}
 

@@ -1,6 +1,6 @@
 import type { IconType } from 'react-icons'
 
-export type SettingsTab = 'general' | 'logging' | 'transcription' | 'about'
+export type SettingsTab = 'general' | 'logging' | 'transcription' | 'history' | 'about'
 
 type SidebarItem = {
   id: SettingsTab

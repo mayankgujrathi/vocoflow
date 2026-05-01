@@ -23,11 +23,20 @@ export type IpcResponse<TPayload> = {
   error?: IpcError
 }
 
-import type { AppSettings, LoggingSettings, SettingsFlashPayload, TranscriptionSettings } from './types/settings'
+import type {
+  AppSettings,
+  HistoryPage,
+  HistorySettings,
+  LoggingSettings,
+  SettingsFlashPayload,
+  TranscriptionSettings,
+} from './types/settings'
 
 export type SettingsResponse = { settings: AppSettings; logs_dir: string; flash?: SettingsFlashPayload }
 export type AboutLogsDirResponse = { logs_dir: string }
 export type AboutOpenExternalUrlResponse = { url: string }
+export type HistoryResponse = { history: HistoryPage }
+export type HistoryDeleteResponse = { deleted: boolean }
 
 export type SettingsEventChanged = {
   event: 'settings.changed'
@@ -161,6 +170,33 @@ export const updateTranscription = async (transcription: TranscriptionSettings):
   return reply.payload.settings
 }
 
+export const updateHistory = async (history: HistorySettings): Promise<AppSettings> => {
+  const reply = await sendIpc<{ history: HistorySettings }, SettingsResponse>({
+    method: 'POST',
+    endpoint: '/settings/update/history',
+    payload: { history },
+  })
+  return reply.payload.settings
+}
+
+export const getHistoryPage = async (page: number, page_size = 20): Promise<HistoryPage> => {
+  const reply = await sendIpc<{ page: number; page_size: number }, HistoryResponse>({
+    method: 'GET',
+    endpoint: '/settings/history',
+    payload: { page, page_size },
+  })
+  return reply.payload.history
+}
+
+export const deleteHistoryEntry = async (id: string): Promise<boolean> => {
+  const reply = await sendIpc<{ id: string }, HistoryDeleteResponse>({
+    method: 'POST',
+    endpoint: '/settings/history/delete',
+    payload: { id },
+  })
+  return reply.payload.deleted
+}
+
 export const getAboutLogsDir = async (): Promise<string> => {
   const reply = await sendIpc<Record<string, never>, AboutLogsDirResponse>({
     method: 'GET',
@@ -197,9 +233,9 @@ export const signalSettingsWindowReady = async (): Promise<void> => {
 }
 
 export const resetDefaults = async (
-  scope: 'general' | 'logging' | 'transcription' | 'all',
+  scope: 'general' | 'logging' | 'transcription' | 'history' | 'all',
 ): Promise<AppSettings> => {
-  const reply = await sendIpc<{ scope: 'general' | 'logging' | 'transcription' | 'all' }, SettingsResponse>({
+  const reply = await sendIpc<{ scope: 'general' | 'logging' | 'transcription' | 'history' | 'all' }, SettingsResponse>({
     method: 'POST',
     endpoint: '/settings/reset/defaults',
     payload: { scope },

@@ -11,10 +11,17 @@ pub struct FlashMessage {
   pub occurred_at_unix_ms: u128,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FlashMarker {
+  pub occurred_at_unix_ms: u128,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SettingsFlashPayload {
   #[serde(skip_serializing_if = "Option::is_none")]
   pub llm_post_process_error: Option<FlashMessage>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub history_changed: Option<FlashMarker>,
 }
 
 fn flash_path() -> PathBuf {
@@ -29,14 +36,46 @@ fn now_unix_ms() -> u128 {
 }
 
 pub fn record_llm_post_process_error(message: String) -> Result<(), String> {
-  let payload = SettingsFlashPayload {
-    llm_post_process_error: Some(FlashMessage {
+  update_flash_payload(|payload| {
+    payload.llm_post_process_error = Some(FlashMessage {
       message,
       occurred_at_unix_ms: now_unix_ms(),
-    }),
-  };
+    });
+  })
+}
 
+pub fn record_history_changed() -> Result<(), String> {
+  update_flash_payload(|payload| {
+    payload.history_changed = Some(FlashMarker {
+      occurred_at_unix_ms: now_unix_ms(),
+    });
+  })
+}
+
+fn update_flash_payload(
+  mutator: impl FnOnce(&mut SettingsFlashPayload),
+) -> Result<(), String> {
+  let mut payload = read_flash_payload_for_update()?;
+  mutator(&mut payload);
+
+  write_flash_payload(&payload)
+}
+
+fn read_flash_payload_for_update() -> Result<SettingsFlashPayload, String> {
   let path = flash_path();
+  if !path.exists() {
+    return Ok(SettingsFlashPayload::default());
+  }
+
+  let raw = fs::read_to_string(&path)
+    .map_err(|e| format!("read flash payload failed: {e}"))?;
+  serde_json::from_str::<SettingsFlashPayload>(&raw)
+    .map_err(|e| format!("parse flash payload failed: {e}"))
+}
+
+fn write_flash_payload(payload: &SettingsFlashPayload) -> Result<(), String> {
+  let path = flash_path();
+
   if let Some(parent) = path.parent() {
     fs::create_dir_all(parent)
       .map_err(|e| format!("create flash dir failed: {e}"))?;
@@ -46,8 +85,6 @@ pub fn record_llm_post_process_error(message: String) -> Result<(), String> {
     .map_err(|e| format!("serialize flash payload failed: {e}"))?;
   fs::write(path, json)
     .map_err(|e| format!("write flash payload failed: {e}"))?;
-
-  crate::settings_window::bridge::events::emit_settings_flash(&payload);
   Ok(())
 }
 
@@ -66,7 +103,8 @@ pub fn take_for_settings_flash() -> Result<Option<SettingsFlashPayload>, String>
   // Read-once semantics: clear after first successful read.
   let _ = fs::remove_file(&path);
 
-  if parsed.llm_post_process_error.is_none() {
+  if parsed.llm_post_process_error.is_none() && parsed.history_changed.is_none()
+  {
     Ok(None)
   } else {
     Ok(Some(parsed))

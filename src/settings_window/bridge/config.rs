@@ -25,6 +25,16 @@ pub static ROUTES: &[RouteDef] = route_table!(
   ),
   (
     "GET",
+    "/settings/history",
+    super::endpoints::settings_get_history::handle
+  ),
+  (
+    "POST",
+    "/settings/history/delete",
+    super::endpoints::settings_delete_history_entry::handle
+  ),
+  (
+    "GET",
     "/settings/about/logs_dir",
     super::endpoints::settings_get_about_logs_dir::handle
   ),
@@ -62,6 +72,11 @@ pub static ROUTES: &[RouteDef] = route_table!(
     "POST",
     "/settings/update/transcription",
     super::endpoints::settings_update_transcription::handle
+  ),
+  (
+    "POST",
+    "/settings/update/history",
+    super::endpoints::settings_update_history::handle
   ),
   (
     "POST",

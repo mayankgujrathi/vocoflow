@@ -6,6 +6,7 @@
 mod app;
 mod audio;
 mod autostart;
+mod history;
 mod hotkey;
 mod llm;
 mod logging;
