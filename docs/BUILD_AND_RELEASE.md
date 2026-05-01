@@ -55,6 +55,7 @@ Generated files in `resources/settings_window` are build artifacts and typically
   - `libwebkit2gtk-4.1-dev`
   - `libjavascriptcoregtk-4.1-dev`
   - `libsoup-3.0-dev`
+  - `inotify-tools` (for settings flash file-watch propagation)
 
 ### macOS
 

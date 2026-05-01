@@ -1,13 +1,13 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { FaCircleInfo, FaGear, FaMicrophoneLines, FaSliders } from 'react-icons/fa6'
 
 import {
-  getAboutLogsDir,
   getAllSettings,
   openAboutExternalUrl,
   openAboutLogsDir,
   resetDefaults,
   signalSettingsWindowReady,
+  subscribeSettingsEvents,
   updateHotkey,
   updateLogging,
   updateStartOnLogin,
@@ -51,6 +51,58 @@ function App() {
   const [flashError, setFlashError] = useState<string>('')
   const [savingKey, setSavingKey] = useState<string>('')
   const [uiBootReady, setUiBootReady] = useState(false)
+  const lastEventVersionRef = useRef(0)
+  const suppressAutosaveRef = useRef(false)
+  const isClosingRef = useRef(false)
+  const dirtyStartOnLoginRef = useRef(false)
+  const dirtyHotkeyRef = useRef(false)
+  const dirtyLoggingRef = useRef(false)
+  const dirtyTranscriptionRef = useRef(false)
+  const startOnLoginTimerRef = useRef<number | null>(null)
+  const hotkeyTimerRef = useRef<number | null>(null)
+  const loggingTimerRef = useRef<number | null>(null)
+  const transcriptionTimerRef = useRef<number | null>(null)
+  const prevStartOnLoginRef = useRef<boolean | null>(null)
+  const prevHotkeyBindingRef = useRef<string | null>(null)
+  const prevHotkeyTimeoutRef = useRef<number | null>(null)
+  const prevLoggingSnapshotRef = useRef<string | null>(null)
+  const prevTranscriptionSnapshotRef = useRef<string | null>(null)
+
+  const applyRemoteSettings = (next: AppSettings) => {
+    suppressAutosaveRef.current = true
+    setSettings(next)
+    prevStartOnLoginRef.current = next.start_on_login
+    prevHotkeyBindingRef.current = next.hotkey.binding
+    prevHotkeyTimeoutRef.current = next.hotkey.chord_timeout_ms
+    prevLoggingSnapshotRef.current = JSON.stringify(next.logging)
+    prevTranscriptionSnapshotRef.current = JSON.stringify(next.transcription)
+    dirtyStartOnLoginRef.current = false
+    dirtyHotkeyRef.current = false
+    dirtyLoggingRef.current = false
+    dirtyTranscriptionRef.current = false
+    queueMicrotask(() => {
+      suppressAutosaveRef.current = false
+    })
+  }
+
+  const clearPendingAutosaveTimers = () => {
+    if (startOnLoginTimerRef.current != null) {
+      window.clearTimeout(startOnLoginTimerRef.current)
+      startOnLoginTimerRef.current = null
+    }
+    if (hotkeyTimerRef.current != null) {
+      window.clearTimeout(hotkeyTimerRef.current)
+      hotkeyTimerRef.current = null
+    }
+    if (loggingTimerRef.current != null) {
+      window.clearTimeout(loggingTimerRef.current)
+      loggingTimerRef.current = null
+    }
+    if (transcriptionTimerRef.current != null) {
+      window.clearTimeout(transcriptionTimerRef.current)
+      transcriptionTimerRef.current = null
+    }
+  }
 
   const sidebarItems = useMemo(
     () => [
@@ -65,9 +117,9 @@ function App() {
   useEffect(() => {
     const load = async () => {
       try {
-        const [loadedSettingsPayload, loadedLogsDir] = await Promise.all([getAllSettings(), getAboutLogsDir()])
-        setSettings(loadedSettingsPayload.settings)
-        setLogsDir(loadedLogsDir)
+        const loadedSettingsPayload = await getAllSettings()
+        applyRemoteSettings(loadedSettingsPayload.settings)
+        setLogsDir(loadedSettingsPayload.logs_dir)
         const flash = loadedSettingsPayload.flash?.llm_post_process_error
         if (flash?.message) {
           setFlashError(flash.message)
@@ -107,42 +159,141 @@ function App() {
   }, [uiBootReady])
 
   useEffect(() => {
-    const timer = setInterval(async () => {
-      try {
-        const latest = await getAllSettings()
-        const flash = latest.flash?.llm_post_process_error
+    return subscribeSettingsEvents((evt) => {
+      if (evt.version <= lastEventVersionRef.current) {
+        return
+      }
+      lastEventVersionRef.current = evt.version
+
+      if (evt.event === 'settings.changed') {
+        applyRemoteSettings(evt.payload.settings)
+      }
+
+      if (evt.event === 'settings.flash') {
+        const flash = evt.payload.flash.llm_post_process_error
         if (flash?.message) {
           setFlashError(flash.message)
         }
-      } catch {
-        // Best-effort live flash polling: avoid noisy status churn.
       }
-    }, 1500)
-
-    return () => clearInterval(timer)
+    })
   }, [])
 
   useEffect(() => {
-    const timer = setTimeout(async () => {
+    const markClosing = () => {
+      isClosingRef.current = true
+      clearPendingAutosaveTimers()
+    }
+
+    window.addEventListener('beforeunload', markClosing)
+    window.addEventListener('pagehide', markClosing)
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') {
+        markClosing()
+      }
+    })
+
+    return () => {
+      markClosing()
+      window.removeEventListener('beforeunload', markClosing)
+      window.removeEventListener('pagehide', markClosing)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (suppressAutosaveRef.current) {
+      return
+    }
+    if (isClosingRef.current || !dirtyStartOnLoginRef.current) {
+      return
+    }
+    if (prevStartOnLoginRef.current === settings.start_on_login) {
+      return
+    }
+
+    prevStartOnLoginRef.current = settings.start_on_login
+    startOnLoginTimerRef.current = window.setTimeout(async () => {
+      if (isClosingRef.current) {
+        return
+      }
       setSavingKey('general')
       try {
         await updateStartOnLogin(settings.start_on_login)
-        await updateHotkey(settings.hotkey.binding, settings.hotkey.chord_timeout_ms)
-        setStatus('General settings auto-saved.')
+        dirtyStartOnLoginRef.current = false
+        setStatus('Start-on-login setting auto-saved.')
       } catch (error) {
         setStatus(`Save failed: ${String(error)}`)
       } finally {
         setSavingKey('')
       }
     }, 250)
-    return () => clearTimeout(timer)
-  }, [settings.start_on_login, settings.hotkey.binding, settings.hotkey.chord_timeout_ms])
+    return () => {
+      if (startOnLoginTimerRef.current != null) {
+        window.clearTimeout(startOnLoginTimerRef.current)
+        startOnLoginTimerRef.current = null
+      }
+    }
+  }, [settings.start_on_login])
 
   useEffect(() => {
-    const timer = setTimeout(async () => {
+    if (suppressAutosaveRef.current) {
+      return
+    }
+    if (isClosingRef.current || !dirtyHotkeyRef.current) {
+      return
+    }
+    if (
+      prevHotkeyBindingRef.current === settings.hotkey.binding
+      && prevHotkeyTimeoutRef.current === settings.hotkey.chord_timeout_ms
+    ) {
+      return
+    }
+
+    prevHotkeyBindingRef.current = settings.hotkey.binding
+    prevHotkeyTimeoutRef.current = settings.hotkey.chord_timeout_ms
+    hotkeyTimerRef.current = window.setTimeout(async () => {
+      if (isClosingRef.current) {
+        return
+      }
+      setSavingKey('general')
+      try {
+        await updateHotkey(settings.hotkey.binding, settings.hotkey.chord_timeout_ms)
+        dirtyHotkeyRef.current = false
+        setStatus('Hotkey setting auto-saved.')
+      } catch (error) {
+        setStatus(`Save failed: ${String(error)}`)
+      } finally {
+        setSavingKey('')
+      }
+    }, 250)
+    return () => {
+      if (hotkeyTimerRef.current != null) {
+        window.clearTimeout(hotkeyTimerRef.current)
+        hotkeyTimerRef.current = null
+      }
+    }
+  }, [settings.hotkey.binding, settings.hotkey.chord_timeout_ms])
+
+  useEffect(() => {
+    if (suppressAutosaveRef.current) {
+      return
+    }
+    if (isClosingRef.current || !dirtyLoggingRef.current) {
+      return
+    }
+    const loggingSnapshot = JSON.stringify(settings.logging)
+    if (prevLoggingSnapshotRef.current === loggingSnapshot) {
+      return
+    }
+    prevLoggingSnapshotRef.current = loggingSnapshot
+
+    loggingTimerRef.current = window.setTimeout(async () => {
+      if (isClosingRef.current) {
+        return
+      }
       setSavingKey('logging')
       try {
         await updateLogging(settings.logging)
+        dirtyLoggingRef.current = false
         setStatus('Logging settings auto-saved.')
       } catch (error) {
         setStatus(`Save failed: ${String(error)}`)
@@ -150,14 +301,35 @@ function App() {
         setSavingKey('')
       }
     }, 300)
-    return () => clearTimeout(timer)
+    return () => {
+      if (loggingTimerRef.current != null) {
+        window.clearTimeout(loggingTimerRef.current)
+        loggingTimerRef.current = null
+      }
+    }
   }, [settings.logging])
 
   useEffect(() => {
-    const timer = setTimeout(async () => {
+    if (suppressAutosaveRef.current) {
+      return
+    }
+    if (isClosingRef.current || !dirtyTranscriptionRef.current) {
+      return
+    }
+    const transcriptionSnapshot = JSON.stringify(settings.transcription)
+    if (prevTranscriptionSnapshotRef.current === transcriptionSnapshot) {
+      return
+    }
+    prevTranscriptionSnapshotRef.current = transcriptionSnapshot
+
+    transcriptionTimerRef.current = window.setTimeout(async () => {
+      if (isClosingRef.current) {
+        return
+      }
       setSavingKey('transcription')
       try {
         await updateTranscription(settings.transcription)
+        dirtyTranscriptionRef.current = false
         setStatus('Transcription settings auto-saved.')
       } catch (error) {
         setStatus(`Save failed: ${String(error)}`)
@@ -165,7 +337,12 @@ function App() {
         setSavingKey('')
       }
     }, 500)
-    return () => clearTimeout(timer)
+    return () => {
+      if (transcriptionTimerRef.current != null) {
+        window.clearTimeout(transcriptionTimerRef.current)
+        transcriptionTimerRef.current = null
+      }
+    }
   }, [settings.transcription])
 
   const openLogs = async () => {
@@ -236,12 +413,17 @@ function App() {
           <GeneralSection
             startOnLogin={settings.start_on_login}
             hotkeyBinding={settings.hotkey.binding}
-            onChange={(next) => setSettings((prev) => ({ ...prev, start_on_login: next }))}
-            onHotkeyBindingChange={(next) =>
+            onChange={(next) => {
+              dirtyStartOnLoginRef.current = true
+              setSettings((prev) => ({ ...prev, start_on_login: next }))
+            }}
+            onHotkeyBindingChange={(next) => {
+              dirtyHotkeyRef.current = true
               setSettings((prev) => ({
                 ...prev,
                 hotkey: { ...prev.hotkey, binding: next },
-              }))}
+              }))
+            }}
             onReset={() => void runReset('general')}
             saving={savingKey === 'general'}
           />
@@ -250,7 +432,10 @@ function App() {
         {activeTab === 'logging' && (
           <LoggingSection
             value={settings.logging}
-            onChange={(next) => setSettings((prev) => ({ ...prev, logging: next }))}
+            onChange={(next) => {
+              dirtyLoggingRef.current = true
+              setSettings((prev) => ({ ...prev, logging: next }))
+            }}
             onReset={() => void runReset('logging')}
             saving={savingKey === 'logging'}
           />
@@ -259,7 +444,10 @@ function App() {
         {activeTab === 'transcription' && (
           <TranscriptionSection
             value={settings.transcription}
-            onChange={(next) => setSettings((prev) => ({ ...prev, transcription: next }))}
+            onChange={(next) => {
+              dirtyTranscriptionRef.current = true
+              setSettings((prev) => ({ ...prev, transcription: next }))
+            }}
             onReset={() => void runReset('transcription')}
             onOpenLlmGuide={() => void openExternalLink(LLM_GUIDE_URL)}
             saving={savingKey === 'transcription'}

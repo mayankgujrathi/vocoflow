@@ -47,6 +47,9 @@ pub fn handle(
 
   match result {
     Ok(updated_settings) => {
+      crate::settings_window::bridge::events::emit_settings_changed(
+        &updated_settings,
+      );
       if matches!(payload.scope.as_str(), "logging" | "all") {
         logging::apply_runtime_logging_settings();
       }

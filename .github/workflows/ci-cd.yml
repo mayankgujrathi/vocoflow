@@ -107,6 +107,7 @@ jobs:
             libxkbcommon-x11-dev \
             libxdo-dev \
             libudev-dev \
+            inotify-tools \
             xvfb \
             libayatana-appindicator3-1 \
             libayatana-appindicator3-dev
@@ -132,6 +133,7 @@ jobs:
           pkg-config --exists atk
           pkg-config --exists wayland-client
           pkg-config --exists libudev
+          command -v inotifywait >/dev/null 2>&1
           ldconfig -p | grep -q libxdo
           ldconfig -p | grep -Eq 'libayatana-appindicator3\.so|libappindicator3\.so'
 

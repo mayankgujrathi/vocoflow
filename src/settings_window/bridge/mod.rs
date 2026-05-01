@@ -1,5 +1,6 @@
 pub mod config;
 pub mod endpoints;
+pub mod events;
 pub mod lib;
 
 use tracing::{debug, info, warn};

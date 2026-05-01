@@ -39,6 +39,9 @@ pub fn handle(
 
   match settings::update_transcription(payload.transcription) {
     Ok(updated_settings) => {
+      crate::settings_window::bridge::events::emit_settings_changed(
+        &updated_settings,
+      );
       debug!(
         request_id = ?req.request_id,
         model_cache_ttl_secs = updated_settings.transcription.model_cache_ttl_secs,

@@ -38,6 +38,9 @@ pub fn handle(
 
   match settings::update_logging(payload.logging) {
     Ok(updated_settings) => {
+      crate::settings_window::bridge::events::emit_settings_changed(
+        &updated_settings,
+      );
       debug!(
         request_id = ?req.request_id,
         app_log_max_lines = updated_settings.logging.app_log_max_lines,

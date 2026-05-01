@@ -35,13 +35,18 @@ pub fn handle(
   };
 
   match settings::update_hotkey(payload.binding, payload.chord_timeout_ms) {
-    Ok(updated_settings) => success_response(
-      req.request_id.clone(),
-      route,
-      SettingsUpdateHotkeyResponse {
-        settings: updated_settings,
-      },
-    ),
+    Ok(updated_settings) => {
+      crate::settings_window::bridge::events::emit_settings_changed(
+        &updated_settings,
+      );
+      success_response(
+        req.request_id.clone(),
+        route,
+        SettingsUpdateHotkeyResponse {
+          settings: updated_settings,
+        },
+      )
+    }
     Err(err) => {
       error!(
         request_id = ?req.request_id,

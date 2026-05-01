@@ -3,7 +3,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
+use notify::{
+  Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher,
+};
 use single_instance::SingleInstance;
 use tracing::{debug, error, info, warn};
 use winit::{
@@ -23,6 +29,8 @@ use crate::settings_window::{
 const BRIDGE_RESPONSE_BUILD_ERROR_BODY: &[u8] =
   b"{\"ok\":false,\"kind\":\"error.response_build\"}";
 static SETTINGS_WINDOW_UI_READY: AtomicBool = AtomicBool::new(false);
+static SETTINGS_WINDOW_PENDING_SCRIPTS: OnceLock<Mutex<Vec<String>>> =
+  OnceLock::new();
 const SETTINGS_PRELOAD_DARK_BG_SCRIPT: &str = r#"
 (() => {
   const applyPreloadDarkTheme = () => {
@@ -356,6 +364,86 @@ fn handle_settings_protocol_request(
   }
 }
 
+fn is_settings_flash_event(event: &Event) -> bool {
+  if !matches!(event.kind, EventKind::Create(_) | EventKind::Modify(_)) {
+    return false;
+  }
+
+  event.paths.iter().any(|path| {
+    path
+      .file_name()
+      .and_then(|name| name.to_str())
+      .map(|name| name.eq_ignore_ascii_case("settings_flash.json"))
+      .unwrap_or(false)
+  })
+}
+
+fn start_settings_flash_watcher() {
+  let watch_dir = crate::settings::data_dir();
+  if let Err(e) = fs::create_dir_all(&watch_dir) {
+    warn!(error = %e, path = %watch_dir.display(), "failed to create settings data dir for flash watcher");
+    return;
+  }
+
+  std::thread::spawn(move || {
+    let (tx, rx) = mpsc::channel::<notify::Result<Event>>();
+    let mut watcher = match RecommendedWatcher::new(
+      move |result| {
+        let _ = tx.send(result);
+      },
+      Config::default(),
+    ) {
+      Ok(watcher) => watcher,
+      Err(e) => {
+        warn!(error = %e, "failed to create settings flash watcher");
+        return;
+      }
+    };
+
+    if let Err(e) = watcher.watch(&watch_dir, RecursiveMode::NonRecursive) {
+      warn!(error = %e, path = %watch_dir.display(), "failed to watch settings data dir for flash file changes");
+      return;
+    }
+
+    info!(path = %watch_dir.display(), "settings flash watcher started");
+    let mut last_emit_at = Instant::now()
+      .checked_sub(Duration::from_secs(1))
+      .unwrap_or_else(Instant::now);
+
+    loop {
+      match rx.recv() {
+        Ok(Ok(event)) => {
+          if !is_settings_flash_event(&event) {
+            continue;
+          }
+
+          let now = Instant::now();
+          if now.duration_since(last_emit_at) < Duration::from_millis(200) {
+            continue;
+          }
+          last_emit_at = now;
+
+          match crate::runtime_flash::take_for_settings_flash() {
+            Ok(Some(flash)) => {
+              crate::settings_window::bridge::events::emit_settings_flash(
+                &flash,
+              );
+            }
+            Ok(None) => {}
+            Err(e) => {
+              warn!(error = %e, "failed reading settings flash payload from watcher event");
+            }
+          }
+        }
+        Ok(Err(e)) => {
+          warn!(error = %e, "settings flash watcher received notify error");
+        }
+        Err(_) => break,
+      }
+    }
+  });
+}
+
 pub fn should_run_as_settings_process() -> bool {
   std::env::args().any(|arg| arg == SETTINGS_WINDOW_ARG)
 }
@@ -389,6 +477,8 @@ pub fn run_settings_process() -> Result<(), String> {
     return Ok(());
   }
 
+  start_settings_flash_watcher();
+
   let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
   event_loop.set_control_flow(ControlFlow::Wait);
 
@@ -405,6 +495,23 @@ struct SettingsWindowApp {
 
 pub(crate) fn mark_settings_window_ui_ready() {
   SETTINGS_WINDOW_UI_READY.store(true, Ordering::Release);
+}
+
+pub(crate) fn queue_script_eval(script: String) {
+  let queue =
+    SETTINGS_WINDOW_PENDING_SCRIPTS.get_or_init(|| Mutex::new(Vec::new()));
+  if let Ok(mut scripts) = queue.lock() {
+    scripts.push(script);
+  }
+}
+
+fn drain_queued_scripts() -> Vec<String> {
+  let queue =
+    SETTINGS_WINDOW_PENDING_SCRIPTS.get_or_init(|| Mutex::new(Vec::new()));
+  if let Ok(mut scripts) = queue.lock() {
+    return std::mem::take(&mut *scripts);
+  }
+  Vec::new()
 }
 
 impl ApplicationHandler for SettingsWindowApp {
@@ -478,6 +585,12 @@ impl ApplicationHandler for SettingsWindowApp {
   }
 
   fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+    if let Some(webview) = &self.webview {
+      for script in drain_queued_scripts() {
+        bridge::eval_js(webview, &script);
+      }
+    }
+
     if !self.window_shown
       && SETTINGS_WINDOW_UI_READY.swap(false, Ordering::AcqRel)
       && let Some(window) = &self.window

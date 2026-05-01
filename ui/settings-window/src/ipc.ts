@@ -25,9 +25,25 @@ export type IpcResponse<TPayload> = {
 
 import type { AppSettings, LoggingSettings, SettingsFlashPayload, TranscriptionSettings } from './types/settings'
 
-export type SettingsResponse = { settings: AppSettings; flash?: SettingsFlashPayload }
+export type SettingsResponse = { settings: AppSettings; logs_dir: string; flash?: SettingsFlashPayload }
 export type AboutLogsDirResponse = { logs_dir: string }
 export type AboutOpenExternalUrlResponse = { url: string }
+
+export type SettingsEventChanged = {
+  event: 'settings.changed'
+  version: number
+  updated_at_ms: number
+  payload: { settings: AppSettings }
+}
+
+export type SettingsEventFlash = {
+  event: 'settings.flash'
+  version: number
+  updated_at_ms: number
+  payload: { flash: SettingsFlashPayload }
+}
+
+export type SettingsEventEnvelope = SettingsEventChanged | SettingsEventFlash
 
 const makeRequestId = (): string => {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -189,4 +205,20 @@ export const resetDefaults = async (
     payload: { scope },
   })
   return reply.payload.settings
+}
+
+export const subscribeSettingsEvents = (
+  onEvent: (event: SettingsEventEnvelope) => void,
+): (() => void) => {
+  const handler = (ev: Event) => {
+    const custom = ev as CustomEvent<unknown>
+    const detail = custom.detail as SettingsEventEnvelope | undefined
+    if (!detail || typeof detail !== 'object' || typeof (detail as { event?: string }).event !== 'string') {
+      return
+    }
+    onEvent(detail)
+  }
+
+  window.addEventListener('vocoflow:settings-event', handler as EventListener)
+  return () => window.removeEventListener('vocoflow:settings-event', handler as EventListener)
 }

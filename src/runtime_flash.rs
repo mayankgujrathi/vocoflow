@@ -44,7 +44,11 @@ pub fn record_llm_post_process_error(message: String) -> Result<(), String> {
 
   let json = serde_json::to_string_pretty(&payload)
     .map_err(|e| format!("serialize flash payload failed: {e}"))?;
-  fs::write(path, json).map_err(|e| format!("write flash payload failed: {e}"))
+  fs::write(path, json)
+    .map_err(|e| format!("write flash payload failed: {e}"))?;
+
+  crate::settings_window::bridge::events::emit_settings_flash(&payload);
+  Ok(())
 }
 
 pub fn take_for_settings_flash() -> Result<Option<SettingsFlashPayload>, String>

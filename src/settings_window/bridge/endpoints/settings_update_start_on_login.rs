@@ -40,6 +40,9 @@ pub fn handle(
 
   match settings::update_start_on_login(payload.start_on_login) {
     Ok(updated_settings) => {
+      crate::settings_window::bridge::events::emit_settings_changed(
+        &updated_settings,
+      );
       if let Err(err) = autostart::sync_from_settings() {
         error!(
           request_id = ?req.request_id,
