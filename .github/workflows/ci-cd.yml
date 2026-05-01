@@ -146,7 +146,7 @@ jobs:
           else
             TAG="$(git describe --tags --abbrev=0 2>/dev/null || true)"
             if [[ -z "$TAG" ]]; then
-              TAG="v0.1.0"
+              TAG="v0.1.1"
             fi
           fi
           echo "value=$TAG" >> "$GITHUB_OUTPUT"
