@@ -6,6 +6,16 @@ Turn your voice into ready-to-paste text in seconds with a fast, privacy-friendl
 
 ## Quick Start
 
+## Docs Map
+
+| Goal | Document |
+| --- | --- |
+| Install and everyday use | [README](README.md) |
+| Build, packaging, CI, release, signing | [Build and Release](docs/BUILD_AND_RELEASE.md) |
+| Runtime settings, logs, traces | [Settings and Logging](docs/SETTINGS_AND_LOGGING.md) |
+| Optional LLM reformatting setup | [LLM Setup and Usage](docs/LLM_SETUP_AND_USAGE.md) |
+| Internal architecture and module layout | [Architecture](docs/ARCHITECTURE.md) |
+
 ### Requirements
 
 - A working microphone (uses system default mic).
@@ -50,6 +60,14 @@ Notes:
 
 - macOS release builds are currently **Apple Silicon only**.
 - Windows users should install via `winget`.
+
+### Platform Support Matrix
+
+| OS | Architecture | Preferred install channel | Release asset |
+| --- | --- | --- | --- |
+| Windows | x64 | `winget` | `vocoflow-<version>-windows-installer.exe` |
+| macOS | Apple Silicon | `brew` or Releases | `vocoflow-<version>-macos.dmg` |
+| Linux | x64 | `brew` or Releases | `vocoflow-<version>-linux.AppImage` |
 
 ## Release Trust (End-user)
 
@@ -111,6 +129,25 @@ What assurance you still get: release builds go through CI validation and automa
 
 Tip: Always download from the official GitHub Releases page.
 
+### Optional: Verify Release Checksums
+
+You can verify downloaded artifacts with published `.sha256` files from the same release.
+
+- **Windows (PowerShell):**
+  ```powershell
+  certutil -hashfile .\vocoflow-<version>-windows-installer.exe SHA256
+  ```
+- **macOS:**
+  ```bash
+  shasum -a 256 vocoflow-<version>-macos.dmg
+  ```
+- **Linux:**
+  ```bash
+  sha256sum vocoflow-<version>-linux.AppImage
+  ```
+
+Compare the resulting hash with the value in the corresponding `.sha256` release file.
+
 ## First Launch: What to Expect
 
 - The app may take a little longer the first time while it prepares runtime files.
@@ -161,6 +198,7 @@ To keep this README focused on install/use, detailed settings and logging behavi
 - [Architecture](docs/ARCHITECTURE.md)
 - [Settings and Logging](docs/SETTINGS_AND_LOGGING.md)
 - [Build and Release](docs/BUILD_AND_RELEASE.md)
+- [LLM Setup and Usage](docs/LLM_SETUP_AND_USAGE.md)
 - [Licensing and Acknowledgments](docs/LICENSES.md)
 
 ## License
