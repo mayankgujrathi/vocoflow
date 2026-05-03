@@ -22,6 +22,51 @@ Quick checks after download:
 cargo build --release
 ```
 
+## Cargo Build Flags
+
+Vocoflow uses a few important Cargo flags across local builds, CI/CD, and release workflows.
+
+- `--release`
+  - Builds with the optimized release profile (`target/release`) for production packaging.
+- `--locked`
+  - Enforces `Cargo.lock` exactly as checked in (used in `release.yml`) for reproducible release builds.
+- `--no-default-features`
+  - Disables crate default features so CI/release can choose runtime/backend features explicitly per OS.
+- `--features "<feature-list>"`
+  - Enables an explicit feature set, e.g. `ort-cpu`, `ort-cuda`, `ort-coreml`, `x11`, `wayland`.
+
+Local parity examples:
+
+```bash
+# Linux CPU baseline (matches CI default when CUDA is not detected)
+cargo build --release --no-default-features --features "ort-cpu,x11,wayland"
+
+# Windows CPU baseline
+cargo build --release --no-default-features --features "ort-cpu"
+
+# macOS CoreML baseline
+cargo build --release --no-default-features --features "ort-coreml"
+```
+
+## Default Build Flags in GitHub CI/CD and Release
+
+Both workflows (`.github/workflows/ci-cd.yml` and `.github/workflows/release.yml`) resolve features dynamically and build using explicit feature flags.
+
+### Common Cargo command shape
+
+- **CI/CD:** `cargo build --release --no-default-features --features "<resolved-features>"`
+- **Release:** `cargo build --release --locked --no-default-features --features "<resolved-features>"`
+
+### Default resolved features by OS
+
+| OS | Default feature set | Auto-upgrade behavior |
+|---|---|---|
+| Linux | `ort-cpu,x11,wayland` | Upgrades to `ort-cuda,x11,wayland` when CUDA/NVIDIA tooling is detected (`nvcc`, `nvidia-smi`, or `CUDA_PATH`/`CUDA_HOME`). |
+| Windows | `ort-cpu` | Upgrades to `ort-cuda` when a CUDA toolkit installation is found under `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA`. |
+| macOS | `ort-coreml` | Stays on `ort-coreml` (CoreML/Metal path). |
+
+This means GitHub default builds are CPU-oriented unless GPU acceleration is detected on Linux/Windows runners.
+
 ## Settings Window Frontend (Bun + React + TypeScript)
 
 The settings UI is authored in `ui/settings-window` and compiled into `resources/settings_window` for Wry.
